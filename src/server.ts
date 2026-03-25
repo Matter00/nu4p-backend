@@ -235,6 +235,7 @@ app.put("/classes/students", async (request, reply) => {
     include: {
       students: true,
       tasks: true,
+      taskStatuses: true,
     },
   });
 
@@ -242,28 +243,49 @@ app.put("/classes/students", async (request, reply) => {
     return reply.status(404).send({ error: "Klas niet gevonden" });
   }
 
+  const trimmedStudents = [...new Set(students.map((s) => s.trim()).filter(Boolean))];
+
+  const existingStudents = schoolClass.students;
+  const existingStudentNames = existingStudents.map((s) => s.name);
+
+  const studentsToDelete = existingStudents.filter(
+    (student) => !trimmedStudents.includes(student.name)
+  );
+
+  const studentNamesToAdd = trimmedStudents.filter(
+    (studentName) => !existingStudentNames.includes(studentName)
+  );
+
   await prisma.$transaction(async (tx) => {
-    await tx.taskStatus.deleteMany({
-      where: { classId: schoolClass.id },
-    });
+    // verwijder statussen van leerlingen die weggaan
+    for (const student of studentsToDelete) {
+      await tx.taskStatus.deleteMany({
+        where: {
+          classId: schoolClass.id,
+          studentId: student.id,
+        },
+      });
 
-    await tx.student.deleteMany({
-      where: { classId: schoolClass.id },
-    });
+      await tx.student.delete({
+        where: { id: student.id },
+      });
+    }
 
-    for (const studentName of students) {
-      const student = await tx.student.create({
+    // voeg nieuwe leerlingen toe
+    for (const studentName of studentNamesToAdd) {
+      const newStudent = await tx.student.create({
         data: {
           name: studentName,
           classId: schoolClass.id,
         },
       });
 
+      // nieuwe leerling krijgt voor bestaande taken rode statussen
       for (const task of schoolClass.tasks) {
         await tx.taskStatus.create({
           data: {
             classId: schoolClass.id,
-            studentId: student.id,
+            studentId: newStudent.id,
             taskId: task.id,
             status: "red",
           },
@@ -290,6 +312,7 @@ app.put("/classes/tasks", async (request, reply) => {
     include: {
       students: true,
       tasks: true,
+      taskStatuses: true,
     },
   });
 
@@ -297,29 +320,50 @@ app.put("/classes/tasks", async (request, reply) => {
     return reply.status(404).send({ error: "Klas niet gevonden" });
   }
 
+  const trimmedTasks = [...new Set(tasks.map((t) => t.trim()).filter(Boolean))];
+
+  const existingTasks = schoolClass.tasks;
+  const existingTaskNames = existingTasks.map((t) => t.name);
+
+  const tasksToDelete = existingTasks.filter(
+    (task) => !trimmedTasks.includes(task.name)
+  );
+
+  const taskNamesToAdd = trimmedTasks.filter(
+    (taskName) => !existingTaskNames.includes(taskName)
+  );
+
   await prisma.$transaction(async (tx) => {
-    await tx.taskStatus.deleteMany({
-      where: { classId: schoolClass.id },
-    });
+    // verwijder statussen van taken die weggaan
+    for (const task of tasksToDelete) {
+      await tx.taskStatus.deleteMany({
+        where: {
+          classId: schoolClass.id,
+          taskId: task.id,
+        },
+      });
 
-    await tx.task.deleteMany({
-      where: { classId: schoolClass.id },
-    });
+      await tx.task.delete({
+        where: { id: task.id },
+      });
+    }
 
-    for (const taskName of tasks) {
-      const task = await tx.task.create({
+    // voeg nieuwe taken toe
+    for (const taskName of taskNamesToAdd) {
+      const newTask = await tx.task.create({
         data: {
           name: taskName,
           classId: schoolClass.id,
         },
       });
 
+      // nieuwe taak krijgt voor bestaande leerlingen rode statussen
       for (const student of schoolClass.students) {
         await tx.taskStatus.create({
           data: {
             classId: schoolClass.id,
             studentId: student.id,
-            taskId: task.id,
+            taskId: newTask.id,
             status: "red",
           },
         });
