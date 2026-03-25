@@ -22,8 +22,8 @@ async function getClassesPayload() {
   const classes = await prisma.schoolClass.findMany({
     orderBy: { name: "asc" },
     include: {
-      students: { orderBy: { name: "asc" } },
-      tasks: { orderBy: { name: "asc" } },
+      students: { orderBy: { sortOrder: "asc" } },
+      tasks: { orderBy: { sortOrder: "asc" } },
       taskStatuses: true,
     },
   });
@@ -272,13 +272,36 @@ app.put("/classes/students", async (request, reply) => {
     }
 
     // voeg nieuwe leerlingen toe
-    for (const studentName of studentNamesToAdd) {
-      const newStudent = await tx.student.create({
-        data: {
-          name: studentName,
-          classId: schoolClass.id,
-        },
-      });
+    for (const [index, studentName] of trimmedStudents.entries()) {
+  const existingStudent = existingStudents.find((s) => s.name === studentName);
+
+  if (existingStudent) {
+    await tx.student.update({
+      where: { id: existingStudent.id },
+      data: { sortOrder: index },
+    });
+    continue;
+  }
+
+  const newStudent = await tx.student.create({
+    data: {
+      name: studentName,
+      classId: schoolClass.id,
+      sortOrder: index,
+    },
+  });
+
+  for (const task of schoolClass.tasks) {
+    await tx.taskStatus.create({
+      data: {
+        classId: schoolClass.id,
+        studentId: newStudent.id,
+        taskId: task.id,
+        status: "red",
+      },
+    });
+  }
+}
 
       // nieuwe leerling krijgt voor bestaande taken rode statussen
       for (const task of schoolClass.tasks) {
@@ -349,13 +372,36 @@ app.put("/classes/tasks", async (request, reply) => {
     }
 
     // voeg nieuwe taken toe
-    for (const taskName of taskNamesToAdd) {
-      const newTask = await tx.task.create({
-        data: {
-          name: taskName,
-          classId: schoolClass.id,
-        },
-      });
+    for (const [index, taskName] of trimmedTasks.entries()) {
+  const existingTask = existingTasks.find((t) => t.name === taskName);
+
+  if (existingTask) {
+    await tx.task.update({
+      where: { id: existingTask.id },
+      data: { sortOrder: index },
+    });
+    continue;
+  }
+
+  const newTask = await tx.task.create({
+    data: {
+      name: taskName,
+      classId: schoolClass.id,
+      sortOrder: index,
+    },
+  });
+
+  for (const student of schoolClass.students) {
+    await tx.taskStatus.create({
+      data: {
+        classId: schoolClass.id,
+        studentId: student.id,
+        taskId: newTask.id,
+        status: "red",
+      },
+    });
+  }
+}
 
       // nieuwe taak krijgt voor bestaande leerlingen rode statussen
       for (const student of schoolClass.students) {
