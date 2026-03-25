@@ -90,7 +90,9 @@ const savePasswordsSchema = z.object({
   studentPassword: z.string().min(1),
   teacherPassword: z.string().min(1),
 });
-
+const adminLoginSchema = z.object({
+  password: z.string().min(1),
+});
 let io: Server;
 
 app.patch("/status", async (request, reply) => {
@@ -411,7 +413,27 @@ app.put("/classes/passwords", async (request, reply) => {
   io.emit("classes-changed");
   return { ok: true };
 });
+app.post("/auth/admin-login", async (request, reply) => {
+  const parsed = adminLoginSchema.safeParse(request.body);
 
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "Ongeldige input" });
+  }
+
+  const { password } = parsed.data;
+
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminPassword) {
+    return reply.status(500).send({ error: "ADMIN_PASSWORD ontbreekt op de server" });
+  }
+
+  if (password !== adminPassword) {
+    return reply.status(401).send({ error: "Fout wachtwoord" });
+  }
+
+  return { ok: true };
+});
 const port = Number(process.env.PORT || 3001);
 
 await app.ready();
