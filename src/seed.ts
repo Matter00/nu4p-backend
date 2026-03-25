@@ -34,7 +34,7 @@ async function main() {
     data: { name: "Rekenen", classId: schoolClass.id },
   });
 
-  const combos = [
+  const combos: Array<[string, string]> = [
     [emma.id, lezen.id],
     [emma.id, rekenen.id],
     [liam.id, lezen.id],
@@ -56,7 +56,7 @@ async function main() {
 }
 
 main()
-  .catch((err) => {
+  .catch((err: unknown) => {
     console.error(err);
     process.exit(1);
   })
