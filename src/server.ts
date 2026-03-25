@@ -5,11 +5,8 @@ import { z } from "zod";
 import { prisma } from "./lib/prisma.js";
 
 const app = Fastify({ logger: true });
-
-// 👉 PAS DIT AAN ALS JE SANDBOX URL VERANDERT
 const FRONTEND_ORIGIN = "https://q648dn.csb.app";
 
-// ✅ CORS FIX (BELANGRIJK)
 await app.register(cors, {
   origin: [FRONTEND_ORIGIN],
   methods: ["GET", "POST", "PATCH", "OPTIONS"],
@@ -17,13 +14,11 @@ await app.register(cors, {
   credentials: false,
 });
 
-// health check
 app.get("/health", async () => {
   return { ok: true };
 });
 
-// classes ophalen
-app.get("/classes", async () => {
+async function getClassesPayload() {
   const classes = await prisma.schoolClass.findMany({
     orderBy: { name: "asc" },
     include: {
@@ -54,9 +49,12 @@ app.get("/classes", async () => {
       ])
     ),
   }));
+}
+
+app.get("/classes", async () => {
+  return getClassesPayload();
 });
 
-// status update schema
 const updateStatusSchema = z.object({
   className: z.string().min(1),
   studentName: z.string().min(1),
@@ -64,9 +62,35 @@ const updateStatusSchema = z.object({
   status: z.enum(["red", "green", "orange"]),
 });
 
+const addClassSchema = z.object({
+  name: z.string().min(1),
+  studentPassword: z.string().min(1).default("1234"),
+  teacherPassword: z.string().min(1).default("abcd"),
+});
+
+const renameClassSchema = z.object({
+  oldName: z.string().min(1),
+  newName: z.string().min(1),
+});
+
+const saveStudentsSchema = z.object({
+  className: z.string().min(1),
+  students: z.array(z.string().min(1)),
+});
+
+const saveTasksSchema = z.object({
+  className: z.string().min(1),
+  tasks: z.array(z.string().min(1)),
+});
+
+const savePasswordsSchema = z.object({
+  className: z.string().min(1),
+  studentPassword: z.string().min(1),
+  teacherPassword: z.string().min(1),
+});
+
 let io: Server;
 
-// status update endpoint
 app.patch("/status", async (request, reply) => {
   const parsed = updateStatusSchema.safeParse(request.body);
 
@@ -109,9 +133,7 @@ app.patch("/status", async (request, reply) => {
         taskId: task.id,
       },
     },
-    update: {
-      status,
-    },
+    update: { status },
     create: {
       classId: schoolClass.id,
       studentId: student.id,
@@ -120,7 +142,6 @@ app.patch("/status", async (request, reply) => {
     },
   });
 
-  // realtime emit
   io.to(`class:${className}`).emit("status-updated", {
     className,
     studentName,
@@ -137,12 +158,212 @@ app.patch("/status", async (request, reply) => {
   };
 });
 
-// server starten
+app.post("/classes", async (request, reply) => {
+  const parsed = addClassSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "Ongeldige input" });
+  }
+
+  const { name, studentPassword, teacherPassword } = parsed.data;
+
+  const existing = await prisma.schoolClass.findUnique({
+    where: { name },
+  });
+
+  if (existing) {
+    return reply.status(409).send({ error: "Deze klas bestaat al" });
+  }
+
+  await prisma.schoolClass.create({
+    data: {
+      name,
+      studentPassword,
+      teacherPassword,
+    },
+  });
+
+  io.emit("classes-changed");
+  return { ok: true };
+});
+
+app.patch("/classes/rename", async (request, reply) => {
+  const parsed = renameClassSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "Ongeldige input" });
+  }
+
+  const { oldName, newName } = parsed.data;
+
+  const schoolClass = await prisma.schoolClass.findUnique({
+    where: { name: oldName },
+  });
+
+  if (!schoolClass) {
+    return reply.status(404).send({ error: "Klas niet gevonden" });
+  }
+
+  const existing = await prisma.schoolClass.findUnique({
+    where: { name: newName },
+  });
+
+  if (existing) {
+    return reply.status(409).send({ error: "Deze klasnaam bestaat al" });
+  }
+
+  await prisma.schoolClass.update({
+    where: { name: oldName },
+    data: { name: newName },
+  });
+
+  io.emit("classes-changed");
+  return { ok: true };
+});
+
+app.put("/classes/students", async (request, reply) => {
+  const parsed = saveStudentsSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "Ongeldige input" });
+  }
+
+  const { className, students } = parsed.data;
+
+  const schoolClass = await prisma.schoolClass.findUnique({
+    where: { name: className },
+    include: {
+      students: true,
+      tasks: true,
+    },
+  });
+
+  if (!schoolClass) {
+    return reply.status(404).send({ error: "Klas niet gevonden" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.taskStatus.deleteMany({
+      where: { classId: schoolClass.id },
+    });
+
+    await tx.student.deleteMany({
+      where: { classId: schoolClass.id },
+    });
+
+    for (const studentName of students) {
+      const student = await tx.student.create({
+        data: {
+          name: studentName,
+          classId: schoolClass.id,
+        },
+      });
+
+      for (const task of schoolClass.tasks) {
+        await tx.taskStatus.create({
+          data: {
+            classId: schoolClass.id,
+            studentId: student.id,
+            taskId: task.id,
+            status: "red",
+          },
+        });
+      }
+    }
+  });
+
+  io.emit("classes-changed");
+  return { ok: true };
+});
+
+app.put("/classes/tasks", async (request, reply) => {
+  const parsed = saveTasksSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "Ongeldige input" });
+  }
+
+  const { className, tasks } = parsed.data;
+
+  const schoolClass = await prisma.schoolClass.findUnique({
+    where: { name: className },
+    include: {
+      students: true,
+      tasks: true,
+    },
+  });
+
+  if (!schoolClass) {
+    return reply.status(404).send({ error: "Klas niet gevonden" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.taskStatus.deleteMany({
+      where: { classId: schoolClass.id },
+    });
+
+    await tx.task.deleteMany({
+      where: { classId: schoolClass.id },
+    });
+
+    for (const taskName of tasks) {
+      const task = await tx.task.create({
+        data: {
+          name: taskName,
+          classId: schoolClass.id,
+        },
+      });
+
+      for (const student of schoolClass.students) {
+        await tx.taskStatus.create({
+          data: {
+            classId: schoolClass.id,
+            studentId: student.id,
+            taskId: task.id,
+            status: "red",
+          },
+        });
+      }
+    }
+  });
+
+  io.emit("classes-changed");
+  return { ok: true };
+});
+
+app.put("/classes/passwords", async (request, reply) => {
+  const parsed = savePasswordsSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({ error: "Ongeldige input" });
+  }
+
+  const { className, studentPassword, teacherPassword } = parsed.data;
+
+  const schoolClass = await prisma.schoolClass.findUnique({
+    where: { name: className },
+  });
+
+  if (!schoolClass) {
+    return reply.status(404).send({ error: "Klas niet gevonden" });
+  }
+
+  await prisma.schoolClass.update({
+    where: { name: className },
+    data: {
+      studentPassword,
+      teacherPassword,
+    },
+  });
+
+  io.emit("classes-changed");
+  return { ok: true };
+});
+
 const port = Number(process.env.PORT || 3001);
 
 await app.ready();
 
-// socket.io setup
 io = new Server(app.server, {
   cors: {
     origin: [FRONTEND_ORIGIN],
