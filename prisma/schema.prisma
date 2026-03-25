@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StatusColor {
+  red
+  green
+  orange
+}
+
+model SchoolClass {
+  id               String       @id @default(cuid())
+  name             String       @unique
+  studentPassword  String
+  teacherPassword  String
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  students         Student[]
+  tasks            Task[]
+  taskStatuses     TaskStatus[]
+}
+
+model Student {
+  id          String       @id @default(cuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  classId     String
+  schoolClass SchoolClass  @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  taskStatuses TaskStatus[]
+
+  @@unique([classId, name])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  classId     String
+  schoolClass SchoolClass  @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  taskStatuses TaskStatus[]
+
+  @@unique([classId, name])
+}
+
+model TaskStatus {
+  id         String       @id @default(cuid())
+  status     StatusColor  @default(red)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  classId    String
+  studentId  String
+  taskId     String
+
+  schoolClass SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  student     Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, studentId, taskId])
+}
