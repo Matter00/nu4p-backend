@@ -5,6 +5,8 @@ import { z } from "zod";
 import { prisma } from "./lib/prisma.js";
 
 const app = Fastify({ logger: true });
+
+// PAS AAN ALS JE CODESANDBOX-URL WIJZIGT
 const FRONTEND_ORIGIN = "https://q648dn.csb.app";
 
 await app.register(cors, {
@@ -244,7 +246,6 @@ app.put("/classes/students", async (request, reply) => {
   }
 
   const trimmedStudents = [...new Set(students.map((s) => s.trim()).filter(Boolean))];
-
   const existingStudents = schoolClass.students;
   const existingStudentNames = existingStudents.map((s) => s.name);
 
@@ -252,12 +253,7 @@ app.put("/classes/students", async (request, reply) => {
     (student) => !trimmedStudents.includes(student.name)
   );
 
-  const studentNamesToAdd = trimmedStudents.filter(
-    (studentName) => !existingStudentNames.includes(studentName)
-  );
-
   await prisma.$transaction(async (tx) => {
-    // verwijder statussen van leerlingen die weggaan
     for (const student of studentsToDelete) {
       await tx.taskStatus.deleteMany({
         where: {
@@ -271,39 +267,25 @@ app.put("/classes/students", async (request, reply) => {
       });
     }
 
-    // voeg nieuwe leerlingen toe
     for (const [index, studentName] of trimmedStudents.entries()) {
-  const existingStudent = existingStudents.find((s) => s.name === studentName);
+      const existingStudent = existingStudents.find((s) => s.name === studentName);
 
-  if (existingStudent) {
-    await tx.student.update({
-      where: { id: existingStudent.id },
-      data: { sortOrder: index },
-    });
-    continue;
-  }
+      if (existingStudent) {
+        await tx.student.update({
+          where: { id: existingStudent.id },
+          data: { sortOrder: index },
+        });
+        continue;
+      }
 
-  const newStudent = await tx.student.create({
-    data: {
-      name: studentName,
-      classId: schoolClass.id,
-      sortOrder: index,
-    },
-  });
+      const newStudent = await tx.student.create({
+        data: {
+          name: studentName,
+          classId: schoolClass.id,
+          sortOrder: index,
+        },
+      });
 
-  for (const task of schoolClass.tasks) {
-    await tx.taskStatus.create({
-      data: {
-        classId: schoolClass.id,
-        studentId: newStudent.id,
-        taskId: task.id,
-        status: "red",
-      },
-    });
-  }
-}
-
-      // nieuwe leerling krijgt voor bestaande taken rode statussen
       for (const task of schoolClass.tasks) {
         await tx.taskStatus.create({
           data: {
@@ -344,7 +326,6 @@ app.put("/classes/tasks", async (request, reply) => {
   }
 
   const trimmedTasks = [...new Set(tasks.map((t) => t.trim()).filter(Boolean))];
-
   const existingTasks = schoolClass.tasks;
   const existingTaskNames = existingTasks.map((t) => t.name);
 
@@ -352,12 +333,7 @@ app.put("/classes/tasks", async (request, reply) => {
     (task) => !trimmedTasks.includes(task.name)
   );
 
-  const taskNamesToAdd = trimmedTasks.filter(
-    (taskName) => !existingTaskNames.includes(taskName)
-  );
-
   await prisma.$transaction(async (tx) => {
-    // verwijder statussen van taken die weggaan
     for (const task of tasksToDelete) {
       await tx.taskStatus.deleteMany({
         where: {
@@ -371,39 +347,25 @@ app.put("/classes/tasks", async (request, reply) => {
       });
     }
 
-    // voeg nieuwe taken toe
     for (const [index, taskName] of trimmedTasks.entries()) {
-  const existingTask = existingTasks.find((t) => t.name === taskName);
+      const existingTask = existingTasks.find((t) => t.name === taskName);
 
-  if (existingTask) {
-    await tx.task.update({
-      where: { id: existingTask.id },
-      data: { sortOrder: index },
-    });
-    continue;
-  }
+      if (existingTask) {
+        await tx.task.update({
+          where: { id: existingTask.id },
+          data: { sortOrder: index },
+        });
+        continue;
+      }
 
-  const newTask = await tx.task.create({
-    data: {
-      name: taskName,
-      classId: schoolClass.id,
-      sortOrder: index,
-    },
-  });
+      const newTask = await tx.task.create({
+        data: {
+          name: taskName,
+          classId: schoolClass.id,
+          sortOrder: index,
+        },
+      });
 
-  for (const student of schoolClass.students) {
-    await tx.taskStatus.create({
-      data: {
-        classId: schoolClass.id,
-        studentId: student.id,
-        taskId: newTask.id,
-        status: "red",
-      },
-    });
-  }
-}
-
-      // nieuwe taak krijgt voor bestaande leerlingen rode statussen
       for (const student of schoolClass.students) {
         await tx.taskStatus.create({
           data: {
