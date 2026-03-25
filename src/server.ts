@@ -9,7 +9,7 @@ const FRONTEND_ORIGIN = "https://q648dn.csb.app";
 
 await app.register(cors, {
   origin: [FRONTEND_ORIGIN],
-  methods: ["GET", "POST", "PATCH", "OPTIONS"],
+  methods: ["GET", "POST", "PATCH", "PUT", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   credentials: false,
 });
@@ -367,7 +367,7 @@ await app.ready();
 io = new Server(app.server, {
   cors: {
     origin: [FRONTEND_ORIGIN],
-    methods: ["GET", "POST", "PATCH"],
+    methods: ["GET", "POST", "PATCH", "PUT"],
     credentials: false,
   },
 });
