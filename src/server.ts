@@ -6,19 +6,23 @@ import { prisma } from "./lib/prisma.js";
 
 const app = Fastify({ logger: true });
 
-const allowedOrigins = (
-  process.env.CLIENT_ORIGIN?.split(",").map((item) => item.trim()) ?? []
-);
+// 👉 PAS DIT AAN ALS JE SANDBOX URL VERANDERT
+const FRONTEND_ORIGIN = "https://q648dn.csb.app";
 
+// ✅ CORS FIX (BELANGRIJK)
 await app.register(cors, {
-  origin: allowedOrigins.length ? allowedOrigins : true,
-  credentials: true,
+  origin: [FRONTEND_ORIGIN],
+  methods: ["GET", "POST", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+  credentials: false,
 });
 
+// health check
 app.get("/health", async () => {
   return { ok: true };
 });
 
+// classes ophalen
 app.get("/classes", async () => {
   const classes = await prisma.schoolClass.findMany({
     orderBy: { name: "asc" },
@@ -52,6 +56,7 @@ app.get("/classes", async () => {
   }));
 });
 
+// status update schema
 const updateStatusSchema = z.object({
   className: z.string().min(1),
   studentName: z.string().min(1),
@@ -61,6 +66,7 @@ const updateStatusSchema = z.object({
 
 let io: Server;
 
+// status update endpoint
 app.patch("/status", async (request, reply) => {
   const parsed = updateStatusSchema.safeParse(request.body);
 
@@ -114,6 +120,7 @@ app.patch("/status", async (request, reply) => {
     },
   });
 
+  // realtime emit
   io.to(`class:${className}`).emit("status-updated", {
     className,
     studentName,
@@ -130,14 +137,17 @@ app.patch("/status", async (request, reply) => {
   };
 });
 
+// server starten
 const port = Number(process.env.PORT || 3001);
 
 await app.ready();
 
+// socket.io setup
 io = new Server(app.server, {
   cors: {
-    origin: allowedOrigins.length ? allowedOrigins : true,
-    credentials: true,
+    origin: [FRONTEND_ORIGIN],
+    methods: ["GET", "POST", "PATCH"],
+    credentials: false,
   },
 });
 
