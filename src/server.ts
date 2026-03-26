@@ -6,11 +6,15 @@ import { prisma } from "./lib/prisma.js";
 
 const app = Fastify({ logger: true });
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://q648dn.csb.app";
-const ALLOWED_ORIGINS = FRONTEND_ORIGIN.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
 
+if (!FRONTEND_ORIGIN) {
+  throw new Error("FRONTEND_ORIGIN ontbreekt");
+}
+const ALLOWED_ORIGINS = [
+  FRONTEND_ORIGIN,
+  /\.vercel\.app$/,
+];
 await app.register(cors, {
   origin: ALLOWED_ORIGINS,
   methods: ["GET", "POST", "PATCH", "PUT", "OPTIONS"],
