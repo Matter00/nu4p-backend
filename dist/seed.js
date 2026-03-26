@@ -15,16 +15,16 @@ async function main() {
         },
     });
     const emma = await prisma.student.create({
-        data: { name: "Emma", classId: schoolClass.id },
+        data: { name: "Emma", classId: schoolClass.id, sortOrder: 0 },
     });
     const liam = await prisma.student.create({
-        data: { name: "Liam", classId: schoolClass.id },
+        data: { name: "Liam", classId: schoolClass.id, sortOrder: 1 },
     });
     const lezen = await prisma.task.create({
-        data: { name: "Lezen", classId: schoolClass.id },
+        data: { name: "Lezen", classId: schoolClass.id, sortOrder: 0 },
     });
     const rekenen = await prisma.task.create({
-        data: { name: "Rekenen", classId: schoolClass.id },
+        data: { name: "Rekenen", classId: schoolClass.id, sortOrder: 1 },
     });
     const combos = [
         [emma.id, lezen.id],

@@ -6,11 +6,13 @@ import { prisma } from "./lib/prisma.js";
 
 const app = Fastify({ logger: true });
 
-// PAS AAN ALS JE CODESANDBOX-URL WIJZIGT
-const FRONTEND_ORIGIN = "https://q648dn.csb.app";
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://q648dn.csb.app";
+const ALLOWED_ORIGINS = FRONTEND_ORIGIN.split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 await app.register(cors, {
-  origin: [FRONTEND_ORIGIN],
+  origin: ALLOWED_ORIGINS,
   methods: ["GET", "POST", "PATCH", "PUT", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   credentials: false,
@@ -19,6 +21,37 @@ await app.register(cors, {
 app.get("/health", async () => {
   return { ok: true };
 });
+
+type StatusValue = "red" | "green" | "orange";
+
+function buildGrid(schoolClass: {
+  students: Array<{ id: string; name: string }>;
+  tasks: Array<{ id: string; name: string }>;
+  taskStatuses: Array<{
+    studentId: string;
+    taskId: string;
+    status: StatusValue;
+  }>;
+}) {
+  const statusMap = new Map(
+    schoolClass.taskStatuses.map((taskStatus) => [
+      `${taskStatus.studentId}:${taskStatus.taskId}`,
+      taskStatus.status,
+    ])
+  );
+
+  return Object.fromEntries(
+    schoolClass.students.map((student) => [
+      student.name,
+      Object.fromEntries(
+        schoolClass.tasks.map((task) => [
+          task.name,
+          statusMap.get(`${student.id}:${task.id}`) ?? "red",
+        ])
+      ),
+    ])
+  );
+}
 
 async function getClassesPayload() {
   const classes = await prisma.schoolClass.findMany({
@@ -35,21 +68,14 @@ async function getClassesPayload() {
     name: schoolClass.name,
     studentPassword: schoolClass.studentPassword,
     teacherPassword: schoolClass.teacherPassword,
-    students: schoolClass.students.map((s) => s.name),
-    tasks: schoolClass.tasks.map((t) => t.name),
-    grid: Object.fromEntries(
-      schoolClass.students.map((student) => [
-        student.name,
-        Object.fromEntries(
-          schoolClass.tasks.map((task) => {
-            const match = schoolClass.taskStatuses.find(
-              (ts) => ts.studentId === student.id && ts.taskId === task.id
-            );
-            return [task.name, match?.status ?? "red"];
-          })
-        ),
-      ])
-    ),
+
+    // Belangrijk: na migratie is dit altijd aanwezig.
+    // Voor compatibiliteit met oude frontend krijgt GET /classes dit nu mee.
+    statusControlsEnabled: schoolClass.statusControlsEnabled,
+
+    students: schoolClass.students.map((student) => student.name),
+    tasks: schoolClass.tasks.map((task) => task.name),
+    grid: buildGrid(schoolClass),
   }));
 }
 
@@ -58,41 +84,49 @@ app.get("/classes", async () => {
 });
 
 const updateStatusSchema = z.object({
-  className: z.string().min(1),
-  studentName: z.string().min(1),
-  taskName: z.string().min(1),
+  className: z.string().trim().min(1),
+  studentName: z.string().trim().min(1),
+  taskName: z.string().trim().min(1),
   status: z.enum(["red", "green", "orange"]),
 });
 
 const addClassSchema = z.object({
-  name: z.string().min(1),
-  studentPassword: z.string().min(1).default("1234"),
-  teacherPassword: z.string().min(1).default("abcd"),
+  name: z.string().trim().min(1),
+  studentPassword: z.string().trim().min(1).default("1234"),
+  teacherPassword: z.string().trim().min(1).default("abcd"),
+  statusControlsEnabled: z.boolean().optional().default(true),
 });
 
 const renameClassSchema = z.object({
-  oldName: z.string().min(1),
-  newName: z.string().min(1),
+  oldName: z.string().trim().min(1),
+  newName: z.string().trim().min(1),
 });
 
 const saveStudentsSchema = z.object({
-  className: z.string().min(1),
-  students: z.array(z.string().min(1)),
+  className: z.string().trim().min(1),
+  students: z.array(z.string().trim().min(1)),
 });
 
 const saveTasksSchema = z.object({
-  className: z.string().min(1),
-  tasks: z.array(z.string().min(1)),
+  className: z.string().trim().min(1),
+  tasks: z.array(z.string().trim().min(1)),
 });
 
 const savePasswordsSchema = z.object({
-  className: z.string().min(1),
-  studentPassword: z.string().min(1),
-  teacherPassword: z.string().min(1),
+  className: z.string().trim().min(1),
+  studentPassword: z.string().trim().min(1),
+  teacherPassword: z.string().trim().min(1),
 });
+
+const updateStatusControlsSchema = z.object({
+  className: z.string().trim().min(1),
+  enabled: z.boolean(),
+});
+
 const adminLoginSchema = z.object({
   password: z.string().min(1),
 });
+
 let io: Server;
 
 app.patch("/status", async (request, reply) => {
@@ -119,12 +153,12 @@ app.patch("/status", async (request, reply) => {
     return reply.status(404).send({ error: "Klas niet gevonden" });
   }
 
-  const student = schoolClass.students.find((s) => s.name === studentName);
+  const student = schoolClass.students.find((item) => item.name === studentName);
   if (!student) {
     return reply.status(404).send({ error: "Leerling niet gevonden" });
   }
 
-  const task = schoolClass.tasks.find((t) => t.name === taskName);
+  const task = schoolClass.tasks.find((item) => item.name === taskName);
   if (!task) {
     return reply.status(404).send({ error: "Taak niet gevonden" });
   }
@@ -166,10 +200,13 @@ app.post("/classes", async (request, reply) => {
   const parsed = addClassSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return reply.status(400).send({ error: "Ongeldige input" });
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
   }
 
-  const { name, studentPassword, teacherPassword } = parsed.data;
+  const { name, studentPassword, teacherPassword, statusControlsEnabled } = parsed.data;
 
   const existing = await prisma.schoolClass.findUnique({
     where: { name },
@@ -179,23 +216,36 @@ app.post("/classes", async (request, reply) => {
     return reply.status(409).send({ error: "Deze klas bestaat al" });
   }
 
-  await prisma.schoolClass.create({
+  const createdClass = await prisma.schoolClass.create({
     data: {
       name,
       studentPassword,
       teacherPassword,
+      statusControlsEnabled,
     },
   });
 
+  io.emit("status-controls-updated", {
+    className: createdClass.name,
+    enabled: createdClass.statusControlsEnabled,
+  });
   io.emit("classes-changed");
-  return { ok: true };
+
+  return {
+    ok: true,
+    className: createdClass.name,
+    statusControlsEnabled: createdClass.statusControlsEnabled,
+  };
 });
 
 app.patch("/classes/rename", async (request, reply) => {
   const parsed = renameClassSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return reply.status(400).send({ error: "Ongeldige input" });
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
   }
 
   const { oldName, newName } = parsed.data;
@@ -229,7 +279,10 @@ app.put("/classes/students", async (request, reply) => {
   const parsed = saveStudentsSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return reply.status(400).send({ error: "Ongeldige input" });
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
   }
 
   const { className, students } = parsed.data;
@@ -239,7 +292,6 @@ app.put("/classes/students", async (request, reply) => {
     include: {
       students: true,
       tasks: true,
-      taskStatuses: true,
     },
   });
 
@@ -247,9 +299,8 @@ app.put("/classes/students", async (request, reply) => {
     return reply.status(404).send({ error: "Klas niet gevonden" });
   }
 
-  const trimmedStudents = [...new Set(students.map((s) => s.trim()).filter(Boolean))];
+  const trimmedStudents = [...new Set(students.map((student) => student.trim()).filter(Boolean))];
   const existingStudents = schoolClass.students;
-  const existingStudentNames = existingStudents.map((s) => s.name);
 
   const studentsToDelete = existingStudents.filter(
     (student) => !trimmedStudents.includes(student.name)
@@ -270,7 +321,7 @@ app.put("/classes/students", async (request, reply) => {
     }
 
     for (const [index, studentName] of trimmedStudents.entries()) {
-      const existingStudent = existingStudents.find((s) => s.name === studentName);
+      const existingStudent = existingStudents.find((student) => student.name === studentName);
 
       if (existingStudent) {
         await tx.student.update({
@@ -309,7 +360,10 @@ app.put("/classes/tasks", async (request, reply) => {
   const parsed = saveTasksSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return reply.status(400).send({ error: "Ongeldige input" });
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
   }
 
   const { className, tasks } = parsed.data;
@@ -319,7 +373,6 @@ app.put("/classes/tasks", async (request, reply) => {
     include: {
       students: true,
       tasks: true,
-      taskStatuses: true,
     },
   });
 
@@ -327,9 +380,8 @@ app.put("/classes/tasks", async (request, reply) => {
     return reply.status(404).send({ error: "Klas niet gevonden" });
   }
 
-  const trimmedTasks = [...new Set(tasks.map((t) => t.trim()).filter(Boolean))];
+  const trimmedTasks = [...new Set(tasks.map((task) => task.trim()).filter(Boolean))];
   const existingTasks = schoolClass.tasks;
-  const existingTaskNames = existingTasks.map((t) => t.name);
 
   const tasksToDelete = existingTasks.filter(
     (task) => !trimmedTasks.includes(task.name)
@@ -350,7 +402,7 @@ app.put("/classes/tasks", async (request, reply) => {
     }
 
     for (const [index, taskName] of trimmedTasks.entries()) {
-      const existingTask = existingTasks.find((t) => t.name === taskName);
+      const existingTask = existingTasks.find((task) => task.name === taskName);
 
       if (existingTask) {
         await tx.task.update({
@@ -389,7 +441,10 @@ app.put("/classes/passwords", async (request, reply) => {
   const parsed = savePasswordsSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return reply.status(400).send({ error: "Ongeldige input" });
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
   }
 
   const { className, studentPassword, teacherPassword } = parsed.data;
@@ -413,11 +468,62 @@ app.put("/classes/passwords", async (request, reply) => {
   io.emit("classes-changed");
   return { ok: true };
 });
+
+app.patch("/classes/status-controls", async (request, reply) => {
+  const parsed = updateStatusControlsSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
+  }
+
+  const { className, enabled } = parsed.data;
+
+  const schoolClass = await prisma.schoolClass.findUnique({
+    where: { name: className },
+  });
+
+  if (!schoolClass) {
+    return reply.status(404).send({ error: "Klas niet gevonden" });
+  }
+
+  const updatedClass = await prisma.schoolClass.update({
+    where: { name: className },
+    data: {
+      statusControlsEnabled: enabled,
+    },
+    select: {
+      id: true,
+      name: true,
+      statusControlsEnabled: true,
+    },
+  });
+
+  const payload = {
+    className: updatedClass.name,
+    enabled: updatedClass.statusControlsEnabled,
+  };
+
+  io.to(`class:${updatedClass.name}`).emit("status-controls-updated", payload);
+  io.emit("status-controls-updated", payload);
+  io.emit("classes-changed");
+
+  return {
+    ok: true,
+    class: updatedClass,
+  };
+});
+
 app.post("/auth/admin-login", async (request, reply) => {
   const parsed = adminLoginSchema.safeParse(request.body);
 
   if (!parsed.success) {
-    return reply.status(400).send({ error: "Ongeldige input" });
+    return reply.status(400).send({
+      error: "Ongeldige input",
+      details: parsed.error.flatten(),
+    });
   }
 
   const { password } = parsed.data;
@@ -434,13 +540,14 @@ app.post("/auth/admin-login", async (request, reply) => {
 
   return { ok: true };
 });
+
 const port = Number(process.env.PORT || 3001);
 
 await app.ready();
 
 io = new Server(app.server, {
   cors: {
-    origin: [FRONTEND_ORIGIN],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST", "PATCH", "PUT"],
     credentials: false,
   },

@@ -15,24 +15,25 @@ async function main() {
       name: "Klas A",
       studentPassword: "1234",
       teacherPassword: "abcd",
+      statusControlsEnabled: true,
     },
   });
 
   const emma = await prisma.student.create({
-  data: { name: "Emma", classId: schoolClass.id, sortOrder: 0 },
-});
+    data: { name: "Emma", classId: schoolClass.id, sortOrder: 0 },
+  });
 
-const liam = await prisma.student.create({
-  data: { name: "Liam", classId: schoolClass.id, sortOrder: 1 },
-});
+  const liam = await prisma.student.create({
+    data: { name: "Liam", classId: schoolClass.id, sortOrder: 1 },
+  });
 
   const lezen = await prisma.task.create({
-  data: { name: "Lezen", classId: schoolClass.id, sortOrder: 0 },
-});
+    data: { name: "Lezen", classId: schoolClass.id, sortOrder: 0 },
+  });
 
-const rekenen = await prisma.task.create({
-  data: { name: "Rekenen", classId: schoolClass.id, sortOrder: 1 },
-});
+  const rekenen = await prisma.task.create({
+    data: { name: "Rekenen", classId: schoolClass.id, sortOrder: 1 },
+  });
 
   const combos: Array<[string, string]> = [
     [emma.id, lezen.id],
