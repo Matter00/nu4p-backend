@@ -6,17 +6,34 @@ import { prisma } from "./lib/prisma.js";
 
 const app = Fastify({ logger: true });
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN;
+const FRONTEND_ORIGINS = (process.env.FRONTEND_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-if (!FRONTEND_ORIGIN) {
-  throw new Error("FRONTEND_ORIGIN ontbreekt");
+if (FRONTEND_ORIGINS.length === 0) {
+  throw new Error("FRONTEND_ORIGINS ontbreekt");
 }
-const ALLOWED_ORIGINS = [
-  FRONTEND_ORIGIN,
-  /\.vercel\.app$/,
-];
+
+function isAllowedOrigin(origin?: string) {
+  if (!origin) return true;
+
+  try {
+    const hostname = new URL(origin).hostname;
+
+    return (
+      FRONTEND_ORIGINS.includes(origin) ||
+      /\.vercel\.app$/.test(hostname)
+    );
+  } catch {
+    return FRONTEND_ORIGINS.includes(origin ?? "");
+  }
+}
+
 await app.register(cors, {
-  origin: ALLOWED_ORIGINS,
+  origin: (origin, callback) => {
+    callback(null, isAllowedOrigin(origin));
+  },
   methods: ["GET", "POST", "PATCH", "PUT", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
   credentials: false,
@@ -56,7 +73,7 @@ function buildGrid(schoolClass: {
     ])
   );
 }
-//test van mattias
+
 async function getClassesPayload() {
   const classes = await prisma.schoolClass.findMany({
     orderBy: { name: "asc" },
@@ -66,17 +83,13 @@ async function getClassesPayload() {
       taskStatuses: true,
     },
   });
-//test van mattias
+
   return classes.map((schoolClass) => ({
     id: schoolClass.id,
     name: schoolClass.name,
     studentPassword: schoolClass.studentPassword,
     teacherPassword: schoolClass.teacherPassword,
-
-    // Belangrijk: na migratie is dit altijd aanwezig.
-    // Voor compatibiliteit met oude frontend krijgt GET /classes dit nu mee.
     statusControlsEnabled: schoolClass.statusControlsEnabled,
-
     students: schoolClass.students.map((student) => student.name),
     tasks: schoolClass.tasks.map((task) => task.name),
     grid: buildGrid(schoolClass),
@@ -551,7 +564,9 @@ await app.ready();
 
 io = new Server(app.server, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: (origin, callback) => {
+      callback(null, isAllowedOrigin(origin));
+    },
     methods: ["GET", "POST", "PATCH", "PUT"],
     credentials: false,
   },
